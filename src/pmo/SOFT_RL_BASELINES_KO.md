@@ -25,6 +25,10 @@ pi*(x) ∝ prior(x) * exp(beta * score(x))
 를 따른다.  
 `prior`는 frozen pretrained SMILES LM이고, `score(x)`는 PMO oracle 점수다.
 
+수식 전개와 `RTB`와의 관계는 별도 문서에 정리했다.
+
+- [SOFT_RL_FORMULAS_KO.md](/home/mila/m/minsu.kim/synsmiles/src/pmo/SOFT_RL_FORMULAS_KO.md)
+
 
 ## 각 method의 의미
 
