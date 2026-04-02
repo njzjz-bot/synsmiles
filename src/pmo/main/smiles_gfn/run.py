@@ -66,6 +66,34 @@ def sanitize(smiles):
     return canonicalized
 
 
+def compute_sequence_logprobs(model, seqs, pad_token_id):
+    outputs = model(
+        input_ids=seqs[:, :-1],
+        attention_mask=(seqs[:, :-1] != pad_token_id).long(),
+        labels=seqs[:, 1:],
+    )
+    shift_labels = seqs[:, 1:]
+    log_probs = torch.nn.functional.log_softmax(outputs.logits, dim=-1)
+    seq_token_logprobs = torch.gather(log_probs, 2, shift_labels.unsqueeze(-1)).squeeze(-1)
+    seq_token_logprobs = seq_token_logprobs * (shift_labels != pad_token_id)
+    return seq_token_logprobs.sum(dim=1)
+
+
+def refresh_negative_difficulty(model, negative_replay, tokenizer, device, batch_size):
+    if len(negative_replay.heap) == 0:
+        return
+
+    model.eval()
+    with torch.no_grad():
+        for start in range(0, len(negative_replay.heap), batch_size):
+            batch = negative_replay.heap[start:start + batch_size]
+            ids = [traj.ids for traj in batch]
+            seqs = pad_sequence(ids, batch_first=True, padding_value=tokenizer.pad_token_id).to(device)
+            difficulties = compute_sequence_logprobs(model, seqs, tokenizer.pad_token_id)
+            for traj, difficulty in zip(batch, difficulties.tolist()):
+                traj.difficulty = float(difficulty)
+
+
 class SynthesizabilityEvaluator:
     def __init__(self, num_workers: int = 4, invalid: float = 0.0, max_size: int = 50_000, use_retrosynthesis: bool = False, sa_threshold: float = 4.0, env: str = 'stock', max_steps: int = 2):
         if use_retrosynthesis:
@@ -199,6 +227,9 @@ class SMILES_GFN_Optimizer(BaseOptimizer):
 
         print(config)
 
+        # path_here = os.path.dirname(os.path.realpath(__file__))
+        # voc = Vocabulary(init_from_file=os.path.join(path_here, "data/Voc"))
+
         tokenizer = AutoTokenizer.from_pretrained("ibm-research/MoLFormer-XL-both-10pct", trust_remote_code=True)
         prior = AutoModelForCausalLM.from_pretrained("ibm-research/GP-MoLFormer-Uniq", trust_remote_code=True).to(device)
         model = AutoModelForCausalLM.from_pretrained("ibm-research/GP-MoLFormer-Uniq", trust_remote_code=True).to(device)
@@ -212,6 +243,12 @@ class SMILES_GFN_Optimizer(BaseOptimizer):
                                       {'params': log_z, 
                                        'lr': config['lr_z']}])
 
+
+        # For policy based RL, we normally train on-policy and correct for the fact that more likely actions
+        # occur more often (which means the agent can get biased towards them). Using experience replay is
+        # therefor not as theoretically sound as it is for value based RL, but it seems to work well.
+        # experience = Experience(voc, max_size=config['num_keep'])
+        # neg_experience = Experience(voc, max_size=config['num_keep'], fifo=True)
         replay = ReplayBuffer(eos_token_id = tokenizer.eos_token_id if tokenizer.eos_token_id else 1,
                                    pad_token_id = tokenizer.pad_token_id,
                                    max_size=config['num_keep'],
@@ -222,6 +259,10 @@ class SMILES_GFN_Optimizer(BaseOptimizer):
                                 max_size=config['num_keep'],
                                 evict_by='oldest'
                                 )
+
+        if config['use_ga']:
+            from ga_expert import GeneticOperatorHandler
+            ga_handler = GeneticOperatorHandler(mutation_rate=0.01, population_size=64)
         
         print("Model initialized, starting training...")
 
@@ -232,6 +273,10 @@ class SMILES_GFN_Optimizer(BaseOptimizer):
 
         prev_best = 0.
         
+        # eval_times = []
+        # training_times = []
+        # total_start = perf_counter()
+
         synth_history = []
 
         while True:
@@ -247,20 +292,27 @@ class SMILES_GFN_Optimizer(BaseOptimizer):
                 training_mode = 'onpolicy'
                 with torch.no_grad():
                     seqs = model.generate(
+                        # input_ids,
                         do_sample=True,
                         max_length=config['max_length'],
                         num_return_sequences=config['batch_size'],
+                        # temperature=self.sampling_temp,
                         pad_token_id=tokenizer.pad_token_id,
                         eos_token_id=tokenizer.eos_token_id,
                         use_cache=True
                     )
                 
                 # Remove duplicates, ie only consider unique seqs
+                # print(seqs.shape, len(unique(seqs)))
                 unique_idxs = unique(seqs)
                 seqs = seqs[unique_idxs]
+                # agent_likelihood = agent_likelihood[unique_idxs]
+                # entropy = entropy[unique_idxs]
 
                 # Get prior likelihood and score
                 smiles = tokenizer.batch_decode(seqs, skip_special_tokens=True)
+                # if config['valid_only']:
+                #     smiles = sanitize(smiles)
 
                 synthesizability = torch.tensor(self.oracle.synth_evaluator.score_batch(smiles)).to(device)
                 synth_indices = (synthesizability == 1.0)
@@ -300,15 +352,91 @@ class SMILES_GFN_Optimizer(BaseOptimizer):
                     valid_smiles = smiles
                     valid_scores = scores
                     valid_synth = synthesizability
+                try:
+                    print(f"step {step}: unique {len(unique_idxs)}, synthesizability {synthesizability.mean().item()}, max score: {valid_scores.max().item()}, avg score: {valid_scores.mean().item()},  pos replay {len(replay.heap)}, neg replay {len(negative_replay.heap)}")
+                except:
+                    print(f"step {step}: unique {len(unique_idxs)}, synthesizability {synthesizability.mean().item()},")
+
+
+                if self.finish:
+                    print('max oracle hit')
+                    break
+                
+                if config['use_ga'] and len(self.oracle) >= 64:
+                    # mutation_rate: 0.01
+                    # population_size: 64
+                    # offspring_size: 8
+                    # ga_generations: 2
+                    self.oracle.sort_buffer()
+                    pop_smis, pop_scores = tuple(map(list, zip(*[(smi, elem[0]) for (smi, elem) in self.oracle.mol_buffer.items()])))
+                    mating_pool = (pop_smis[:config['num_keep']], pop_scores[:config['num_keep']])
+                    for g in range(2):
+                        child_smis, _, pop_smis, pop_scores = ga_handler.query(
+                            query_size=32, mating_pool=mating_pool, pool=None, 
+                            rank_coefficient=0.01,
+                        )
+                        child_synth = torch.tensor(self.oracle.synth_evaluator.score_batch(child_smis)).to(device)
+                        child_seqs = tokenizer.batch_encode_plus(child_smis, add_special_tokens=True, padding=True, max_length=config['max_length'], return_tensors='pt')["input_ids"].to(device)
+                        child_scores= torch.zeros(len(child_smis)).to(device)
+
+                        if child_synth.sum() > 0:
+                            child_pos_indices = (child_synth == 1).nonzero(as_tuple=True)[0]
+                            child_pos_smiles = [child_smis[i] for i in child_pos_indices.tolist()]
+                            child_pos_scores = torch.tensor(self.oracle(child_pos_smiles)).to(device)
+                            child_pos_seqs = child_seqs[child_pos_indices]
+                            child_scores[child_pos_indices] = child_pos_scores
+                            replay.add_batch(child_pos_seqs, child_pos_smiles, child_pos_scores, [1] * len(child_pos_smiles), masks=None, use_reshaped_reward=config['reshape_reward'])
+                        else:
+                            continue
+
+                        try:
+                            print(f"step {step}: GA {g}: synth {child_synth.sum().item()}, max {child_scores.max().item()}, mean {child_scores[child_synth.bool()].mean().item()}")
+                        except:
+                            print(f"step {step}: GA {g}: synth {child_synth.sum().item()}, max {child_scores.max().item()}, mean {child_scores.mean().item()}")
+
+                        negative_indices = (child_synth == 0).nonzero(as_tuple=True)[0]
+                        negative_smiles = [child_smis[i] for i in negative_indices.tolist()]
+                        negative_seqs = child_seqs[negative_indices]
+                        negative_scores = torch.zeros(len(negative_smiles)).to(device)
+                        if config['reshape_reward']:
+                            replay.add_batch(negative_seqs, negative_smiles, negative_scores, [0] * len(negative_smiles), masks=None, use_reshaped_reward=config['reshape_reward'])
+                        elif negative_replay:
+                            negative_replay.add_batch(negative_seqs, negative_smiles, negative_scores, [0] * len(negative_smiles), masks=None, use_reshaped_reward=config['reshape_reward'])
+
+                        # mating_pool = (pop_smis+child_smis, pop_scores+child_scores.tolist())  # or filtered?
+                        if child_synth.sum() > 0:
+                            mating_pool = (pop_smis+child_pos_smiles, pop_scores+child_pos_scores.tolist())  # or filtered?
+
             else:  # replay training
                 training_mode = 'replay'
-                valid_inputs, valid_scores = replay.sample(config['experience_replay'], device, reward_prioritized=True)
+                # if len(replay.heap) < config['experience_replay'] or len(negative_replay.heap) < config['experience_replay']:
+                #     continue
+                valid_inputs, valid_scores = replay.sample(config['experience_replay'], device, reward_prioritized=True, rank_based=config['rank_based'], replace=config['replace'])
                 valid_seqs = valid_inputs["input_ids"]
                 valid_smiles = [tokenizer.decode(seq, skip_special_tokens=True) for seq in valid_seqs]
                 valid_synth = torch.tensor(self.oracle.synth_evaluator.score_batch(valid_smiles)).to(device)  # won't be slow (cached)
 
                 if config['aux_loss'] != "none":
-                    neg_inputs, negative_scores = negative_replay.sample(config['experience_replay'], device)
+                    if config.get('neg_sampling_strategy', 'uniform') == 'difficulty_rank':
+                        refresh_interval = config.get('neg_difficulty_refresh', 10)
+                        if step % refresh_interval == 0:
+                            refresh_negative_difficulty(
+                                model,
+                                negative_replay,
+                                tokenizer,
+                                device,
+                                config.get('neg_difficulty_batch_size', 128),
+                            )
+                        neg_inputs, negative_scores = negative_replay.sample(
+                            config['experience_replay'],
+                            device,
+                            reward_prioritized=True,
+                            rank_based=True,
+                            replace=True,
+                            score_attr="difficulty",
+                        )
+                    else:
+                        neg_inputs, negative_scores = negative_replay.sample(config['experience_replay'], device)
                     negative_seqs = neg_inputs["input_ids"]
                     negative_smiles = [tokenizer.decode(seq, skip_special_tokens=True) for seq in negative_seqs]
 
@@ -318,10 +446,26 @@ class SMILES_GFN_Optimizer(BaseOptimizer):
 
             
             if (config['filter_unsynthesizable'] or config['reshape_reward']) and (valid_synth.sum() < 4 or negative_seqs.shape[0] < 4):
+                # if len(replay.heap) > config['batch_size']:
+                #     valid_inputs, valid_scores = replay.sample(config['batch_size'], device)
+                #     valid_seqs = valid_inputs["input_ids"]
+                #     valid_smiles = [tokenizer.decode(seq, skip_special_tokens=True) for seq in valid_seqs]
+                #     valid_synth = torch.tensor(self.oracle.synth_evaluator.score_batch(valid_smiles)).to(device)  # won't be slow (cached)
+                # else:
                 step += 1
                 continue
             else:
                 aux_loss = torch.zeros((), device=device)
+
+            # if negative_seqs.shape[0] < 4:
+            #     if len(negative_replay.heap) > config['batch_size']:
+            #         neg_inputs, negative_scores = negative_replay.sample(config['batch_size'], device)
+            #         negative_seqs = neg_inputs["input_ids"]
+            #         negative_smiles = [tokenizer.decode(seq, skip_special_tokens=True) for seq in negative_seqs]
+            #         negative_synth = torch.zeros(len(negative_smiles)).to(device)
+            #     else:
+            #         step += 1
+            #         continue
 
             # early stopping
             if len(self.oracle) > 1000:
@@ -379,67 +523,74 @@ class SMILES_GFN_Optimizer(BaseOptimizer):
             backward_flow = prior_seq_logprobs + config['beta'] * valid_scores
             loss = torch.pow(forward_flow - backward_flow, 2).mean()
 
-            if training_mode == 'onpolicy':
+            if config['separate_update'] or training_mode == 'onpolicy':
                 optimizer.zero_grad()
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config['max_norm'])
                 optimizer.step()
                 
             if config['aux_loss'] != "none" and len(valid_smiles) > 0 and training_mode == 'replay':
-                mutated_neg_smiles, mutated_seqs= [], []
-                paired = []
-                for s, f in zip(valid_smiles, valid_synth):  # TODO: check when using RS + Aux
-                    if not f:
-                        continue
-                    mutated = mutate(s, self.oracle.synth_evaluator)  # TODO: check if this is correct
-                    if mutated:
-                        try:
-                            mutated_info = diff_mask_molformer(s, mutated, tokenizer)
-                        except:
-                            paired.append(False)
-                            continue
-                        paired.append(True)
-                        mutated_neg_smiles.append(mutated)
-                        mutated_seqs.append(torch.tensor(mutated_info['input_ids']))
-                    else:
-                        paired.append(False)
-
-                if len(mutated_seqs) > 0:
-                    mutated_neg_seqs = pad_sequence(mutated_seqs, batch_first=True, padding_value=tokenizer.pad_token_id).to(device)
-
-                    pos_logits = model(
-                        input_ids=valid_seqs[:, :-1],
-                        attention_mask=(valid_seqs[:, :-1] != tokenizer.pad_token_id).long(),
-                        labels=valid_seqs[:, 1:],
-                    ).logits
-
-                    pos_log_probs = torch.nn.functional.log_softmax(pos_logits, dim=-1)
-                    pos_seq_token_logprobs = torch.gather(pos_log_probs, 2, shift_labels.unsqueeze(-1)).squeeze(-1)
-                    pos_seq_token_logprobs = pos_seq_token_logprobs * (shift_labels != tokenizer.pad_token_id)
-                    pos_seq_logprobs = pos_seq_token_logprobs.sum(dim=1)
-                    if config['reshape_reward']:
-                        pos_seq_logprobs = pos_seq_logprobs[valid_synth.bool()]
-
-                    mut_logits = model(
-                        input_ids=mutated_neg_seqs[:, :-1],
-                        attention_mask=(mutated_neg_seqs[:, :-1] != tokenizer.pad_token_id).long(),
-                        labels=mutated_neg_seqs[:, 1:],
-                    ).logits
-
-                    mut_shift_labels = mutated_neg_seqs[:, 1:]
-                    mut_log_probs = torch.nn.functional.log_softmax(mut_logits, dim=-1)
-                    mut_seq_token_logprobs = torch.gather(mut_log_probs, 2, mut_shift_labels.unsqueeze(-1)).squeeze(-1)
-                    mut_seq_token_logprobs = mut_seq_token_logprobs * (mut_shift_labels != tokenizer.pad_token_id)
-                    mut_seq_logprobs = mut_seq_token_logprobs.sum(dim=1)
-                    
-                    paired_mask = torch.tensor(paired).to(device)
-                    
-                    mutated_log_sum = torch.logsumexp(mut_seq_logprobs, dim=0) - math.log(max(mut_seq_logprobs.numel(), 1.0))
-                    aux_loss = -(pos_seq_logprobs[paired_mask] - torch.logaddexp(pos_seq_logprobs[paired_mask], mutated_log_sum)).mean()
-
-                else:
+                if config['without_mutation']:
                     aux_loss = torch.zeros((), device=device)
-                
+                    pos_seq_logprobs = seq_logprobs
+                else:
+                    mutated_neg_smiles, mutated_seqs= [], []
+                    paired = []
+                    for s, f in zip(valid_smiles, valid_synth):  # TODO: check when using RS + Aux
+                        if not f:
+                            continue
+                        mutated = mutate(s, self.oracle.synth_evaluator)  # TODO: check if this is correct
+                        if mutated:
+                            try:
+                                mutated_info = diff_mask_molformer(s, mutated, tokenizer)
+                            except:
+                                paired.append(False)
+                                continue
+                            paired.append(True)
+                            mutated_neg_smiles.append(mutated)
+                            mutated_seqs.append(torch.tensor(mutated_info['input_ids']))
+                        else:
+                            paired.append(False)
+                    # mutated_neg_seqs = self.tokenizer.batch_encode_plus(mutated_neg_smiles, add_special_tokens=True, padding=True, max_length=self.max_length, return_tensors='pt')["input_ids"].to(self.device)
+                    if len(mutated_seqs) > 0:
+                        mutated_neg_seqs = pad_sequence(mutated_seqs, batch_first=True, padding_value=tokenizer.pad_token_id).to(device)
+
+                        pos_logits = model(
+                            input_ids=valid_seqs[:, :-1],
+                            attention_mask=(valid_seqs[:, :-1] != tokenizer.pad_token_id).long(),
+                            labels=valid_seqs[:, 1:],
+                        ).logits
+
+                        pos_log_probs = torch.nn.functional.log_softmax(pos_logits, dim=-1)
+                        pos_seq_token_logprobs = torch.gather(pos_log_probs, 2, shift_labels.unsqueeze(-1)).squeeze(-1)
+                        pos_seq_token_logprobs = pos_seq_token_logprobs * (shift_labels != tokenizer.pad_token_id)
+                        pos_seq_logprobs = pos_seq_token_logprobs.sum(dim=1)
+                        if config['reshape_reward']:
+                            pos_seq_logprobs = pos_seq_logprobs[valid_synth.bool()]
+
+                        mut_logits = model(
+                            input_ids=mutated_neg_seqs[:, :-1],
+                            attention_mask=(mutated_neg_seqs[:, :-1] != tokenizer.pad_token_id).long(),
+                            labels=mutated_neg_seqs[:, 1:],
+                        ).logits
+
+                        mut_shift_labels = mutated_neg_seqs[:, 1:]
+                        mut_log_probs = torch.nn.functional.log_softmax(mut_logits, dim=-1)
+                        mut_seq_token_logprobs = torch.gather(mut_log_probs, 2, mut_shift_labels.unsqueeze(-1)).squeeze(-1)
+                        mut_seq_token_logprobs = mut_seq_token_logprobs * (mut_shift_labels != tokenizer.pad_token_id)
+                        mut_seq_logprobs = mut_seq_token_logprobs.sum(dim=1)
+                        
+                        paired_mask = torch.tensor(paired).to(device)
+                        
+                        if config['pairwise_mutated']:
+                            aux_loss = -(pos_seq_logprobs[paired_mask] - torch.logaddexp(pos_seq_logprobs[paired_mask], mut_seq_logprobs)).mean()
+                        else:
+                            mutated_log_sum = torch.logsumexp(mut_seq_logprobs, dim=0) - math.log(max(mut_seq_logprobs.numel(), 1.0))
+                            aux_loss = -(pos_seq_logprobs[paired_mask] - torch.logaddexp(pos_seq_logprobs[paired_mask], mutated_log_sum)).mean()
+
+                    else:
+                        aux_loss = torch.zeros((), device=device)
+                # if len(negative_seqs) > 8:
                 neg_logits = model(
                     input_ids=negative_seqs[:, :-1],
                     attention_mask=(negative_seqs[:, :-1] != tokenizer.pad_token_id).long(),
@@ -455,11 +606,18 @@ class SMILES_GFN_Optimizer(BaseOptimizer):
                 neg_log_sum = torch.logsumexp(neg_seq_logprobs, dim=0) - math.log(max(neg_seq_logprobs.numel(), 1.0))
                 aux_loss += -(pos_seq_logprobs - torch.logaddexp(pos_seq_logprobs, neg_log_sum)).mean()
 
-                optimizer.zero_grad()
-                (loss + config['aux_coefficient'] * aux_loss).backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config['max_norm'])
-                optimizer.step()
+                if config['separate_update']:
+                    optimizer.zero_grad()
+                    (config['aux_coefficient'] * aux_loss).backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config['max_norm'])
+                    optimizer.step()
+                else:
+                    optimizer.zero_grad()
+                    (loss + config['aux_coefficient'] * aux_loss).backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config['max_norm'])
+                    optimizer.step()
 
+            # print(f"Step {step}: {loss.item()}, {aux_loss.item()}")
             step += 1
 
         try:

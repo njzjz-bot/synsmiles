@@ -50,6 +50,18 @@ def main():
         from main.synnet.run import SynNet_Optimizer as Optimizers
     elif args.method == "smiles_gfn":
         from main.smiles_gfn.run import SMILES_GFN_Optimizer as Optimizer
+    elif args.method == "reinvent_rs":
+        path_main = os.path.dirname(os.path.realpath(__file__))
+        path_main = os.path.join(path_main, "main", "smiles_gfn")
+        from main.smiles_gfn.run_reinvent import REINVENT_RS_Optimizer as Optimizer
+    elif args.method == "smiles_maxent":
+        path_main = os.path.dirname(os.path.realpath(__file__))
+        path_main = os.path.join(path_main, "main", "smiles_gfn")
+        from main.smiles_gfn.run_maxent import SMILES_MaxEnt_Optimizer as Optimizer
+    elif args.method == "smiles_mle":
+        path_main = os.path.dirname(os.path.realpath(__file__))
+        path_main = os.path.join(path_main, "main", "smiles_gfn")
+        from main.smiles_gfn.run_mle import SMILES_MLE_Optimizer as Optimizer
     else:
         raise ValueError("Unrecognized method name.")
 
@@ -116,4 +128,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

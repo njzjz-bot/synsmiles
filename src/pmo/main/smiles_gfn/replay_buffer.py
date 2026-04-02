@@ -46,6 +46,7 @@ class Trajectory:
     mask: torch.Tensor
     fp: object = field(compare=False, repr=False, default=None)      # RDKit ExplicitBitVect
     novelty: float = field(compare=False, repr=False, default=1.0)   # 1 - max(sim to others)
+    difficulty: float = field(compare=False, repr=False, default=0.0)
 
     def __post_init__(self):
         self.sort_idx = self.reward  # min-heap on reward
@@ -237,10 +238,10 @@ class ReplayBuffer:
             best_sim = max(sims_i) if sims_i else 0.0
             it.novelty = 1.0 - float(best_sim)
 
-    def sample(self, n: int, device: str, reward_prioritized: bool = False, rank_based: bool = False, replace: bool = True):
+    def sample(self, n: int, device: str, reward_prioritized: bool = False, rank_based: bool = False, replace: bool = True, score_attr: str = "reward"):
         n = min(n, len(self.heap))
         if reward_prioritized:
-            rewards = torch.tensor([t.reward for t in self.heap], dtype=torch.float32)
+            rewards = torch.tensor([float(getattr(t, score_attr, 0.0)) for t in self.heap], dtype=torch.float32)
             # rewards = torch.tensor([t.reward * t.synthesizability for t in self.heap], dtype=torch.float32)
             # Avoid negative or zero rewards for samplings
             min_reward = rewards.min().item()
@@ -248,7 +249,7 @@ class ReplayBuffer:
                 rewards = rewards - min_reward + 1e-6
             if rank_based:
                 ## rank-based sampling
-                scores_np = np.array([t.reward for t in self.heap])
+                scores_np = np.array([float(getattr(t, score_attr, 0.0)) for t in self.heap])
                 ranks = np.argsort(np.argsort(-1 * scores_np))
                 weights = 1.0 / (0.01 * len(scores_np) + ranks)
                 indices = list(torch.utils.data.WeightedRandomSampler(
@@ -269,4 +270,3 @@ class ReplayBuffer:
         rewards = torch.tensor([t.reward for t in batch], device=device)
         synthesizabilities = torch.tensor([t.synthesizability for t in batch], device=device)
         return {"input_ids": ids, "mutation_mask": mask, "synthesizability": synthesizabilities, "smiles": [t.smiles for t in batch]}, rewards
-
