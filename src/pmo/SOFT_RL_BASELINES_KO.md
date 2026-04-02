@@ -27,7 +27,7 @@ pi*(x) ∝ prior(x) * exp(beta * score(x))
 
 수식 전개와 `RTB`와의 관계는 별도 문서에 정리했다.
 
-- [SOFT_RL_FORMULAS_KO.md](/home/mila/m/minsu.kim/synsmiles/src/pmo/SOFT_RL_FORMULAS_KO.md)
+- [SOFT_RL_FORMULAS_KO.md](./SOFT_RL_FORMULAS_KO.md)
 
 
 ## 각 method의 의미
@@ -35,8 +35,8 @@ pi*(x) ∝ prior(x) * exp(beta * score(x))
 ### 1. `sql_base`
 
 파일:
-- [run_sql_base.py](/home/mila/m/minsu.kim/synsmiles/src/pmo/main/smiles_gfn/run_sql_base.py)
-- [hparams_sql_base.yaml](/home/mila/m/minsu.kim/synsmiles/src/pmo/main/smiles_gfn/hparams_sql_base.yaml)
+- [run_sql_base.py](./main/smiles_gfn/run_sql_base.py)
+- [hparams_sql_base.yaml](./main/smiles_gfn/hparams_sql_base.yaml)
 
 의도:
 - `reinvent_rs` 스타일의 기본 실험 골격을 유지
@@ -52,8 +52,8 @@ pi*(x) ∝ prior(x) * exp(beta * score(x))
 ### 2. `sac_base`
 
 파일:
-- [run_sac_base.py](/home/mila/m/minsu.kim/synsmiles/src/pmo/main/smiles_gfn/run_sac_base.py)
-- [hparams_sac_base.yaml](/home/mila/m/minsu.kim/synsmiles/src/pmo/main/smiles_gfn/hparams_sac_base.yaml)
+- [run_sac_base.py](./main/smiles_gfn/run_sac_base.py)
+- [hparams_sac_base.yaml](./main/smiles_gfn/hparams_sac_base.yaml)
 
 의도:
 - `sql_base`와 같은 base setting에서 SAC objective 비교
@@ -73,8 +73,8 @@ pi*(x) ∝ prior(x) * exp(beta * score(x))
 ### 3. `sql_s3`
 
 파일:
-- [run_sql_s3.py](/home/mila/m/minsu.kim/synsmiles/src/pmo/main/smiles_gfn/run_sql_s3.py)
-- [hparams_sql_s3.yaml](/home/mila/m/minsu.kim/synsmiles/src/pmo/main/smiles_gfn/hparams_sql_s3.yaml)
+- [run_sql_s3.py](./main/smiles_gfn/run_sql_s3.py)
+- [hparams_sql_s3.yaml](./main/smiles_gfn/hparams_sql_s3.yaml)
 
 의도:
 - 기존 `run.py`의 S3 machinery를 최대한 유지
@@ -89,8 +89,8 @@ pi*(x) ∝ prior(x) * exp(beta * score(x))
 ### 4. `sac_s3`
 
 파일:
-- [run_sac_s3.py](/home/mila/m/minsu.kim/synsmiles/src/pmo/main/smiles_gfn/run_sac_s3.py)
-- [hparams_sac_s3.yaml](/home/mila/m/minsu.kim/synsmiles/src/pmo/main/smiles_gfn/hparams_sac_s3.yaml)
+- [run_sac_s3.py](./main/smiles_gfn/run_sac_s3.py)
+- [hparams_sac_s3.yaml](./main/smiles_gfn/hparams_sac_s3.yaml)
 
 의도:
 - `sql_s3`의 off-policy machinery를 그대로 재사용
@@ -106,7 +106,7 @@ pi*(x) ∝ prior(x) * exp(beta * score(x))
 
 ### 엔트리 포인트
 
-런처는 [run.py](/home/mila/m/minsu.kim/synsmiles/src/pmo/run.py) 에 연결되어 있다.
+런처는 [run.py](./run.py) 에 연결되어 있다.
 
 추가된 method:
 
@@ -118,7 +118,7 @@ pi*(x) ∝ prior(x) * exp(beta * score(x))
 
 ### 보조 수정
 
-- [genetic_operator/mutate.py](/home/mila/m/minsu.kim/synsmiles/src/pmo/main/smiles_gfn/genetic_operator/mutate.py)
+- [genetic_operator/mutate.py](./main/smiles_gfn/genetic_operator/mutate.py)
   오래된 import 경로를 현재 트리에 맞게 수정했다.
 
 
@@ -141,10 +141,10 @@ Python 환경은 기존 실험과 동일하게 아래 환경을 사용했다.
 
 다음 스크립트를 바로 사용할 수 있다.
 
-- [run_sql_base_1k.sh](/home/mila/m/minsu.kim/synsmiles/src/pmo/run_sql_base_1k.sh)
-- [run_sac_base_1k.sh](/home/mila/m/minsu.kim/synsmiles/src/pmo/run_sac_base_1k.sh)
-- [run_sql_s3_1k.sh](/home/mila/m/minsu.kim/synsmiles/src/pmo/run_sql_s3_1k.sh)
-- [run_sac_s3_1k.sh](/home/mila/m/minsu.kim/synsmiles/src/pmo/run_sac_s3_1k.sh)
+- [run_sql_base_1k.sh](./run_sql_base_1k.sh)
+- [run_sac_base_1k.sh](./run_sac_base_1k.sh)
+- [run_sql_s3_1k.sh](./run_sql_s3_1k.sh)
+- [run_sac_s3_1k.sh](./run_sac_s3_1k.sh)
 
 예:
 
@@ -212,8 +212,8 @@ bash /home/mila/m/minsu.kim/synsmiles/src/pmo/run_sql_base_1k.sh
 
 ### Base 설정
 
-- [hparams_sql_base.yaml](/home/mila/m/minsu.kim/synsmiles/src/pmo/main/smiles_gfn/hparams_sql_base.yaml)
-- [hparams_sac_base.yaml](/home/mila/m/minsu.kim/synsmiles/src/pmo/main/smiles_gfn/hparams_sac_base.yaml)
+- [hparams_sql_base.yaml](./main/smiles_gfn/hparams_sql_base.yaml)
+- [hparams_sac_base.yaml](./main/smiles_gfn/hparams_sac_base.yaml)
 
 현재 기본값:
 
@@ -227,8 +227,8 @@ bash /home/mila/m/minsu.kim/synsmiles/src/pmo/run_sql_base_1k.sh
 
 ### S3 설정
 
-- [hparams_sql_s3.yaml](/home/mila/m/minsu.kim/synsmiles/src/pmo/main/smiles_gfn/hparams_sql_s3.yaml)
-- [hparams_sac_s3.yaml](/home/mila/m/minsu.kim/synsmiles/src/pmo/main/smiles_gfn/hparams_sac_s3.yaml)
+- [hparams_sql_s3.yaml](./main/smiles_gfn/hparams_sql_s3.yaml)
+- [hparams_sac_s3.yaml](./main/smiles_gfn/hparams_sac_s3.yaml)
 
 주요 파라미터:
 

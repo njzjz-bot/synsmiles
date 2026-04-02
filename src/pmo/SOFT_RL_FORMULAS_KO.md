@@ -123,7 +123,7 @@ L_SQL = sum_t ( Q(s_t, a_t) - y_t )^2
 현재 `sql_base` 구현의 핵심 부분은 다음과 같다.
 
 파일:
-- `src/pmo/main/smiles_gfn/run_sql_base.py`
+- [run_sql_base.py](./main/smiles_gfn/run_sql_base.py)
 
 ```python
 prior_log_probs = _masked_prior_log_probs(prior_logits, bos_token_id, pad_token_id)
@@ -228,7 +228,7 @@ L_actor = sum_t E_{a ~ pi(. | s_t)}[
 현재 `sac_base` 구현의 핵심 부분은 다음과 같다.
 
 파일:
-- `src/pmo/main/smiles_gfn/run_sac_base.py`
+- [run_sac_base.py](./main/smiles_gfn/run_sac_base.py)
 
 ```python
 combined_logits = prior_log_probs + policy_correction_logits
@@ -320,8 +320,8 @@ p_post(x) ∝ p0(x) * exp(beta * score(x))
 
 정확히 말하면,
 
-- `RTB`는 "full trajectory constraint"
-- `SQL/SAC`는 "local constraint"
+- `RTB`는 `full trajectory constraint`
+- `SQL/SAC`는 `local constraint`
 
 를 쓴다.
 
