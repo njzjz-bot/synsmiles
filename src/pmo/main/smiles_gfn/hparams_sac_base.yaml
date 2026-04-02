@@ -1,0 +1,13 @@
+max_length: 140
+learning_rate: 0.0001
+batch_size: 32
+beta: 50
+num_jobs: 1
+valid_only: False
+use_retrosynthesis: True
+max_retro_steps: 3
+retro_env: stock_hb
+sa_threshold: 3.0
+reshape_reward: True
+max_norm: 10.0
+target_tau: 0.01

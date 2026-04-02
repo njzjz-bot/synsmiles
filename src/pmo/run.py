@@ -54,6 +54,22 @@ def main():
         path_main = os.path.dirname(os.path.realpath(__file__))
         path_main = os.path.join(path_main, "main", "smiles_gfn")
         from main.smiles_gfn.run_reinvent import REINVENT_RS_Optimizer as Optimizer
+    elif args.method == "sql_base":
+        path_main = os.path.dirname(os.path.realpath(__file__))
+        path_main = os.path.join(path_main, "main", "smiles_gfn")
+        from main.smiles_gfn.run_sql_base import SQL_BASE_Optimizer as Optimizer
+    elif args.method == "sac_base":
+        path_main = os.path.dirname(os.path.realpath(__file__))
+        path_main = os.path.join(path_main, "main", "smiles_gfn")
+        from main.smiles_gfn.run_sac_base import SAC_BASE_Optimizer as Optimizer
+    elif args.method == "sql_s3":
+        path_main = os.path.dirname(os.path.realpath(__file__))
+        path_main = os.path.join(path_main, "main", "smiles_gfn")
+        from main.smiles_gfn.run_sql_s3 import SQL_S3_Optimizer as Optimizer
+    elif args.method == "sac_s3":
+        path_main = os.path.dirname(os.path.realpath(__file__))
+        path_main = os.path.join(path_main, "main", "smiles_gfn")
+        from main.smiles_gfn.run_sac_s3 import SAC_S3_Optimizer as Optimizer
     elif args.method == "smiles_maxent":
         path_main = os.path.dirname(os.path.realpath(__file__))
         path_main = os.path.join(path_main, "main", "smiles_gfn")
